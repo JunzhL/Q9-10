@@ -83,10 +83,10 @@
             (set! program res)])]
     [`(seq ,lostmt ...)
      (for/list ([stmt lostmt])
-       (eval-stmt #f stmt))]
+       (eval-stmt #f stmt))] ;; TRYING TO SOLVE THE VOID ISSUE, SEE IN eval-stmt
     
 (define (eval-stmt done? stmts)
-  (cond [(empty? stmts)
+  (cond [(empty? stmts) ;; check the flag here
          (when done?
              (reverse program))]
         [else (interp (car stmts)) (eval-stmt done? (cdr stmts))]))
