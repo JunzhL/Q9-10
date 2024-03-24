@@ -1,0 +1,463 @@
+#lang racket
+
+(define var-ht (make-hash))
+
+;; load-aprimp: (listof list) -> void
+;; remember to invert the list of prog at the end
+(define (load-aprimp prog-list)
+  (define prog empty)
+  (define prog-len 0)
+  (for [(inst (in-list prog-list))]
+    (cond [(or (number? inst) (boolean? inst) (symbol? inst)) (set! prog-len (+ prog-len 1)) (set! prog (cons inst prog))]
+    [else (define type (first inst))
+    (cond [(symbol=? type 'const) ;; '(const NAME 0)
+           (if (hash-has-key? var-ht (second inst)) (convert-error "duplicate")
+               (hash-set! var-ht (second inst) (list 'const (third inst))))]
+          [(symbol=? type 'label) ;; '(label NAME)
+           (if (hash-has-key? var-ht (second inst)) (convert-error "duplicate")
+               (hash-set! var-ht (second inst) (list 'label prog-len)))]
+          [(symbol=? type 'data)
+           (if (hash-has-key? var-ht (second inst)) (convert-error "duplicate")
+               (cond [(and (list? (third inst)) (<= (length inst) 3))
+                   ;; (data NAME (10 1-or-PSYMBOL))
+                   ;; store it as '(data loc num)
+                     (define val (third inst))
+                     (define repeat-num (first val))
+                     (define num (second val))
+                     (hash-set! var-ht (second inst) (list 'data prog-len num))
+                     (set! prog-len (+ prog-len repeat-num))
+                     (for [(i repeat-num)] ;; for [(i 10)] // loop 10 times
+                       (set! prog (cons num prog)))]
+                   ;; (data 'NAME 1 'ONE 3 4)
+                   ;; Check the psymbols as value exists
+                   ;; NAME -> 1, NAME+1 -> 2
+                   [else
+                     (define ldata (rest (rest inst)))
+                     ;; store as '(data loc num)
+                     (hash-set! var-ht (second inst) (list 'data prog-len (third inst)))
+                     ;; add to program
+                     (for [(item (in-list ldata))]
+                       (set! prog-len (+ prog-len 1))
+                       (set! prog (cons item prog)))]))]
+          [(symbol=? type 'halt) 
+          (set! prog (cons 0 prog)) (set! prog-len (+ prog-len 1))]
+          [(symbol? type)
+           (set! prog (cons inst prog))
+           (set! prog-len (+ prog-len 1))])]))
+  (evaluate-var)
+  prog)
+
+
+;; NAME '(const 0) // field cannot be label
+;; LABEL '(label loc)
+;; DATA '(data loc num)
+(define (evaluate-var)
+;; (display var-ht)
+  ;; tail recursion
+  (define (eval key value)
+    (define type (first value))
+    (define val (second value))
+    (cond [(and (symbol=? type 'const) (symbol? val))
+            ;;; (display key)
+            ;;; (newline)
+            ;;; (display value)
+            ;;; (newline)
+           (when (symbol=? val key) (convert-error "circular"))
+           (define newval (hash-ref var-ht val (lambda () (error "undefined"))))
+        ;;;    (display newval)
+        ;;;    (newline)
+           (if (symbol=? (first newval) 'const)
+               (eval key newval)
+               (hash-set! var-ht key (list type (second newval))))]
+            [(symbol=? type 'const) (hash-set! var-ht key (list 'const val))]))
+  (define var-lst (hash->list var-ht))
+  (for [(item (in-list var-lst))]
+    (eval (first item) (rest item))))
+
+(define (convert-prog prog)
+  (define res empty)
+  (for/list [(inst1 prog)]
+    (cond [(or (number? inst1) (boolean? inst1)) (set! res (cons inst1 res))]
+        [(symbol? inst1) (set! res (cons (get-imm inst1 #t) res))]
+        [(and (list? inst1) (= (length inst1) 1)) (set! res (cons inst1 res))]
+        [else (define stmt-type (first inst1))
+    (cond [(symbol=? stmt-type 'print-val)
+           (set! res (cons (list 'print-val
+                       (get-imm-or-ind (second inst1) #f #f))
+                 res))]
+          [(symbol=? stmt-type 'print-string)
+           (set! res (cons inst1 res))]
+          [(symbol=? stmt-type 'branch)
+           (set! res (cons (list 'branch (get-imm-or-ind (second inst1) #f #f)
+                       (get-imm-or-ind (third inst1) #t #t)) res))]
+          [(symbol=? stmt-type 'jump)
+           (set! res (cons (list 'jump (get-imm-or-ind (second inst1) #t #t)) res))]
+          [(or (symbol=? stmt-type 'lnot)
+               (symbol=? stmt-type 'move))
+           (set! res (cons
+            (list stmt-type (get-ind (second inst1) #t)
+                  (get-imm-or-ind (third inst1) #f #f)) res))]
+          [(= (length inst1) 2) (set! res (cons inst1 res))]
+          [else
+           (set! res (cons (list stmt-type (get-ind (second inst1) #t)
+                       (get-imm-or-ind (third inst1) #f #f)
+                       (get-imm-or-ind (fourth inst1) #f #f)) res))])]))
+  res)
+
+(define (convert-error msg)
+    (error msg))
+
+;; do offset
+(define (get-imm-or-ind name check-label? const-ind?)
+  (cond
+    [(list? name)
+    (if (= (length name) 1) name
+     (get-offset name))] ;; dealint with offset (only?)
+    [(or (number? name) (boolean? name)) name]
+    [else 
+    (define value (hash-ref var-ht name (lambda () (error "undefined"))))
+        (cond [(symbol=? 'const (first value))
+                (if const-ind? (list (second value)) (second value))]
+            [(symbol=? 'data (first value))
+                (list (second value))]
+            [(symbol=? 'label (first value))
+                (if check-label?
+                    (second value)
+                    (convert-error "incorrect"))])]))
+
+(define (get-imm name check-label?)
+  (cond [(or (number? name) (and (list? name) (= (length name) 1))) name]
+    [else 
+    (define value (hash-ref var-ht name (lambda () (error "undefined"))))
+    (cond [(or (symbol=? 'const (first value))
+                (symbol=? 'data (first value))) (second value)]
+        [else 
+        (if check-label? (second value) (convert-error "incorrect"))])]))
+
+;; do offset
+(define (get-ind name dest?)
+  (cond
+    [(list? name)
+    (if (= 1 (length name)) 
+      (if dest? name (get-ind (first name) #f))
+     (get-offset name))]
+    [(number? name) name]
+    [else (define value (hash-ref var-ht name (lambda () (error "undefined"))))
+            (if (symbol=? (first value) 'data)
+                (list (second value))
+                (convert-error "incorrect"))]))
+
+(define (get-offset name)
+(list (if (list? (first name)) (first name) (get-imm (first name) #f))
+    (if (list? (second name)) (second name) (get-ind (second name) #t))))
+
+(define (primplify insts)
+  (define res1 (load-aprimp insts))
+  ;;; (display res1)
+  ;;; (newline)
+  ;;; (display var-ht)
+  ;;(display res1)
+  (convert-prog res1))
+;;; (define case_label_correct
+;;;   '((label TOP)
+;;; (jump TOP)
+;;; (branch 0 TOP)
+;;; (const NAME TOP))) ;; tried
+;;; (define case_data_const_correct
+;;;   '((const SYMBOL1 20)
+;;; (data DATA3 DATA1)
+;;; (data DATA1 20)
+;;; (data DATA2 DATA1)
+;;; (branch DATA1 SYMBOL1)
+;;; (add DATA3 SYMBOL1 DATA2)))
+;;; (define case_data_correct ;; tried
+;;; '((data DATA1 DATA2)
+;;; (data DATA2 21)))
+;;; (define case_data_const_correct2 '((const SYMBOL1 20)
+;;; (const SS SYMBOL1)
+;;; (const SS2 T)
+;;; (data T SS2))) ;; tried
+;;; (define case_data_mult_offset '((label LOOP)
+;;; (jump TEST)
+;;; (const TEST1 4)
+;;; (add (4) TEST (TEST1 TEST))
+;;; (data TEST 13)
+;;; (data TEST2 (10 TEST))
+;;; )) ;; tried
+
+;;; (define case_const_dest_inc 
+;;; '((const LOC 4)
+;;; (add LOC 4 5))) ;; tried
+
+;;; (define case_undef '((add HELLO 2))) ;; tried
+;;; (define case_circ 
+;;; '((const HELLO WORLD)
+;;; (const WORLD HELLO)))
+
+;;; (define case_mock_circ 
+;;; '((const HELLO LOC)
+;;; (data LOC HELLO)))
+
+;;; (define case_complex '((label LOOP-TOP)
+;;; (gt TMP1 X 0)
+;;; (branch TMP1 LOOP-COUNT)
+;;; (jump LOOP-DONE)
+;;; (label LOOP-COUNT)
+;;; (mul Y 2 Y)
+;;; (sub X X 1)
+;;; (print-val Y)
+;;; (print-string "\n")
+;;; (jump LOOP-TOP)
+;;; (label LOOP-DONE)
+;;; (halt)
+;;; (data X 10)
+;;; (data Y 1)
+;;; (data TMP1 0)))
+
+;;; (define case2 '(x 1 x (const x 10)))
+
+;;; (define case1 
+;;; '((label TOP) 
+;;; (const x 10) 
+;;; TOP 
+;;; (print-val x)))
+
+;;; (define test1 '((print-val x) (halt) (data x 3)))
+;;; (define test2 '((label hey) (data a 1 2 3) (halt) (data b 2) (add 10 b 2) (add 11 1 2) a (jump hey)))
+;;; (define test3 '((label LOOP_TOP)
+;;;                 (lt TMP1 _i 5)             ;0
+;;;                 (branch TMP1 LOOP_CONT)    ;1
+;;;                 (jump LOOP_DONE)           ;2 
+;;;                 (label LOOP_CONT)
+;;;                 (add _sum _sum (_A _i))    ;3 
+;;;                 (add _i _i 1)              ;4
+;;;                 (jump LOOP_TOP)            ;5 
+;;;                 (label LOOP_DONE)
+;;;                 (print-val _sum)           ;6
+;;;                 (halt)                     ;7 
+;;;                 (data _sum 0)              ;8
+;;;                 (data _i 0)                ;9
+;;;                 (data TMP1 0)              ;10 
+;;;                 ;(data TMP1 1)
+;;;                 (data _A 1 2 3 4 5)))      ;11
+;;; ;(const a b)
+;;; ;(const b a)))
+;;; (define test4 '((gt (11) (9) 0)
+;;;                 (branch (11) 3)
+;;;                 (jump 8)
+;;;                 (mul (10) 2 (10))
+;;;                 (sub (9) (9) 1)
+;;;                 (print-val (10))
+;;;                 (print-string "yo")
+;;;                 (jump 0)
+;;;                 0
+;;;                 10
+;;;                 1
+;;;                 0))
+;;; (define test5  '((add LENGTH 0 10)              ; Length of the array
+;;;                  (add SEARCHED-ELEMENT 0 7)     ; Element to be searched
+;;;                  (add LEFT 0 0)                 ; Left pointer
+;;;                  (sub RIGHT LENGTH 1)           ; Right pointer
+;;;                  (div TMP1 LEFT 2)              ; Calculate the mid point
+;;;                  (add MID TMP1 RIGHT)           ; Mid pointer
+;;;                  (label BINARY-SEARCH)
+;;;                  (label SEARCH-LOOP)
+;;;                  (gt TMP1 LEFT RIGHT)
+;;;                  (branch TMP1 SEARCH-NOT-FOUND)
+;;;                  (add TMP1 LEFT RIGHT)
+;;;                  (div MID TMP1 2)
+;;;                  (mul TMP2 MID 4)
+;;;                  (add TMP2 TMP2 ARRAY)
+;;;                  (equal TMP2 SEARCHED-ELEMENT MID-ELEMENT)
+;;;                  (branch TMP2 FOUND)
+;;;                  (lt TMP2 SEARCHED-ELEMENT MID-ELEMENT)
+;;;                  (jump SEARCH-LEFT)
+;;;                  (jump SEARCH-RIGHT)
+;;;                  (label SEARCH-LEFT)
+;;;                  (sub TMP1 MID 1)
+;;;                  (move RIGHT TMP1)
+;;;                  (jump SEARCH-LOOP)
+;;;                  (label SEARCH-RIGHT)
+;;;                  (add TMP1 MID 1)
+;;;                  (move LEFT TMP1)
+;;;                  (jump SEARCH-LOOP)
+;;;                  (label FOUND)
+;;;                  (print-string "Element found at index ")
+;;;                  (print-val MID)
+;;;                  (print-string "\n")
+;;;                  (halt)
+;;;                  (label SEARCH-NOT-FOUND)
+;;;                  (print-string "Element not found\n")
+;;;                  (halt)
+;;;                  (data MID-ELEMENT 0)           ; Variable to store the element at mid
+;;;                  (data ARRAY 1 4 4 7 8 9 10 12 14 17 19 22 23 25) ; Sorted array
+;;;                  (data TMP1 0)                  ; Temporary variable 1
+;;;                  (data TMP2 0)                  ; Temporary variable 2
+;;;                  (data TMP3 0)                  ; Temporary variable 3
+;;;                  (data LENGTH 0)                ; Length of the array
+;;;                  (data SEARCHED-ELEMENT 9)      ; Element to be searched
+;;;                  (data LEFT 0)                  ; Left pointer
+;;;                  (data RIGHT 0)                 ; Right pointer
+;;;                  (data MID 0)))                  ; Mid pointer 
+;;; (define test6 '((add TMP1 TMP1 TMP1)
+;;;                 (data TMP1 10)
+;;;                 (jump TMP1)
+;;;                 ;(label temp2)
+;;;                 TMP1))
+;;; (define test7 '((move P LIST) (move SUM 0) (label LOOP) (eq TMP0 P EMPTY) (branch TMP0 DONE) (add SUM SUM P) (move P (1 P)) (jump LOOP) (label DONE)))
+;;; ;(primplify test3)
+;;; (define test8 '((label LOOP-TOP)
+;;;                 (gt TMP1 X 0)
+;;;                 (branch TMP1 LOOP-CONT)
+;;;                 (jump LOOP-DONE)
+;;;                 (label LOOP-CONT)
+;;;                 (mul Y 2 Y)
+;;;                 (sub X X 1)
+;;;                 (print-val Y)
+;;;                 (print-string "\n")
+;;;                 (jump LOOP-TOP)
+;;;                 (label LOOP-DONE)
+;;;                 (halt)
+;;;                 (data X 10)
+;;;                 (data Y 1)
+;;;                 (data TMP1 0)))
+
+;;; (define test9 '((const A B) (const B A)))
+;;; ;; there is a bug when using add, not-equal
+;;; (define case9
+;;; '((label DATA)
+;;; (jump DATA)
+;;; (branch a b)
+;;; (data a 0)
+;;; (const b 0)
+;;; (branch b a)
+;;; (branch a DATA)
+;;; (branch a 0)
+;;; (branch 0 0)
+;;; (branch (0) (0))
+;;; (add a 0 0)
+;;; (add 0 0 (0))
+;;; (add (0) 0 0)
+;;; (add a a b)
+;;; ))
+
+;;; (define case-circular2
+;;; '((const CONST1 CONST2)
+;;; (const CONST2 CONST3)
+;;; (const CONST3 CONST1)))
+
+;;; (define case-single
+;;; '((label DATA) DATA
+;;; )
+;;; )
+
+;;; (define undef-test '((const B C)))
+
+;;; (define circ-test '((data A B)
+;;;                     (const B C)
+;;;                     (const C A)
+;;;                     (print-val (C A))))
+
+;;; (define fib-test '(
+;;;                    (label TOP)
+;;;                    (gt B N 10)
+;;;                    (branch B TERM)
+;;;                    (add TMP1 TMP2 TMP3) ; tmp1 (n) = tmp2 (n - 1) + tmp3 (n - 2)
+;;;                    (move TMP3 TMP2)     ; tmp2 <- tmp1
+;;;                    (move TMP2 TMP1)
+;;;                    (sub N N 1)
+;;;                    (jump TOP)
+;;;                    (label TERM)
+;;;                    (halt)
+;;;                    (data TMP1 0)
+;;;                    (data TMP2 0)
+;;;                    (data TMP3 1)
+;;;                    (data B 0)
+;;;                    (data N 0)
+;;; ))
+
+;;; (define array-test '(
+;;;                     (print-val (1 (9)))
+;;;                     (data A (10 1))))
+
+;;; (define case-case-x
+;;; '((data A B)
+;;; (data B C)
+;;; (const TEST 333)
+;;; (label MID)
+;;; (jump (B TEST))
+;;; (move (A B) (MID B))))
+
+;;; (define test1
+;;;   '((data D1 #t)
+;;;     (data D2 102)
+;;;     (data D3 100 (1 D2) D1)))
+
+;;; (define imm_data
+;;;   '(D1
+;;;     (data D1 #f)
+;;;     ))
+
+;;; (define imm_const
+;;;   '((const D1 #f)
+;;;     D1))
+
+;;; (define imm_label
+;;;   '((label D1)
+;;;     3 #t #f))
+
+;;; (define test2
+;;;   '((label L1)
+;;;     (data D1 #t)
+;;;     (data D2 102)
+;;;     (data D3 (5 #t))
+;;;     (data D4 (5 D4))
+;;;     (data D5 (5 D1))
+;;;     (data D6 (5 D3))
+;;;     (label L2)
+;;;     (const C1 444)
+;;;     (const C2 #f)
+;;;     (const C4 D7)
+;;;     (const C3 (C1 C3))
+;;;     (const C5 555)
+;;;     (label L3)
+;;;     (data D7 (L1 L2) (D7 C4) (D6) (L1 C1) D4 D3 D2 D1)
+;;;     (add (3) 4 5)
+;;;     (add (3 4) 4 5)
+;;;     (add ((3) 4) 4 5)
+;;;     (add ((3) (4)) 4 5) ;; should return directly
+;;;     (add (D7 D4) 4 5) ;; add ((22) (7)) 4 5 // 22 should have no bracket
+;;;     (add (C1 D4) 4 5)
+;;;     (add ((C1) D4) 4 5)
+;;;     (add ((C1 D3) (D4)) 4 5) ;; (add ((444 (2)) (7)) 4 5) ;; should be (add ((C1 D3) (D4))4 5)
+;;;     (add ((3) (4)) D7 C3)
+;;;     (add ((3) (4)) (D7 3) (C3 D4)) ;;(add ((3) 4) (22) (C1 C3))
+;;;     ;; (add   ((3) (4))   (22)   (C1 C3))
+;;;     (move(D3 (3)) ((D7) 3))
+;;;     (move (D7) (D1 D6))
+;;;     (jump L3)
+;;;     (jump C2)
+;;;     (jump D7)
+;;;     (jump (3))
+;;;     (jump 3)
+;;;     (jump (D3 D4))
+;;;     (jump (C3 D4))
+;;;     (branch 3 54)
+;;;     (branch D4 D3)
+;;;     (branch C1 C2)
+;;;     (branch D3 L3)
+;;;     (branch ((3) D4) D5)
+;;;     (branch ((3) D4) C5)
+;;;     (branch ((3) D4) L2)
+;;;     (print-val D3)
+;;;     (print-val C3)
+;;;     (print-val C3)
+;;;     (print-val D1)
+;;;     (print-val #t)
+;;;     (print-val 34)
+;;;     (print-val (3))
+;;;     (print-val (D3 4))
+;;;     (print-string D3)
+;;;     (print-string (3))))
+
+;;; (display (primplify test2))
