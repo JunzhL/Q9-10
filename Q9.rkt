@@ -30,7 +30,7 @@
    'not 'lnot))
 
 (define (generate)
-  (define curtop (+ s-cur 1)) ;; potentially generate one new tmp
+  (define curtop (+ s-cur 1))
   (cond [(> curtop s-top)
          (set! s-top (+ s-top 1)) (set! s-cur s-top)
          (define ntmp (string->symbol (string-append "TMP" (number->string s-cur))))
@@ -65,13 +65,6 @@
 (define (tf-convert sym)
   (if (symbol=? sym 'true) #t #f))
 
-;(define (eval-loop tmpcount lostmt)
-;  (cond [(empty? lostmt) (print "d") (displayln tmpcount) (displayln "e") (displayln s-top) (displayln "f") (displayln s-cur)
-;                         tmpcount]
-;        [else (define ncount (interp #t (first lostmt) tmpcount))
-;              (displayln ncount)
-;              (eval-loop ncount (rest lostmt))]))
-
 (define (eval-loop tmpcount lostmt)
   (cond [(empty? lostmt) tmpcount]
         [else (define ncount (interp #t (first lostmt) 0))
@@ -85,34 +78,29 @@
 ;; - update program and tmpcount
 ;; - return (list var/tmp tmpcount)
 (define (eval-aexp tmpcount aexp)
-  (cond [(number? aexp) ;(set! program (cons aexp program))
+  (cond [(number? aexp)
          (list aexp tmpcount aexp)]
         [(symbol? aexp)
          (define nid (mod-sym aexp))
-         ;(set! program (cons nid program))
          (list nid tmpcount aexp)]
         [else
          (match aexp
            [`(,op ,aexp1 ,aexp2)
             (define nop (hash-ref aexpop-ht op))
-            (define res1 (eval-aexp tmpcount aexp1)) ;; updates program for aexp1, return (list var tmpcount)
+            (define res1 (eval-aexp tmpcount aexp1))
             (define var1 (caddr res1))
             (set! tmpcount (+ (cadr res1) tmpcount))
-            (define res2 (eval-aexp tmpcount aexp2)) ;; updates program for aexp2, return (list var tmpcount)
+            (define res2 (eval-aexp tmpcount aexp2))
             (define var2 (caddr res2))
             (set! tmpcount (+ (cadr res2) tmpcount))
             (cond [(and (number? var1) (hash-has-key? var-ht var2))
                    (define res (list nop (car res2) (car res1) (car res2)))
                    (set! program (cons res program))
-                   (list 0 tmpcount)]
+                   (list #\0 tmpcount)]
                   [(and (number? var2) (hash-has-key? var-ht var1))
                    (define res (list nop (car res1) (car res1) (car res2)))
                    (set! program (cons res program))
-                   (list 0 tmpcount)]
-;                       (and (hash-has-key? var-ht var1) (hash-has-key? var-ht var2))) ;; is (add X X) allowed in SIMPL??????
-;                   (define res (list nop (caddr res1) (caddr res2)))
-;                   (set! program (cons res program))
-;                   (list 0 tmpcount)] ;; no tmp created, with 0 as indication
+                   (list #\0 tmpcount)]
                   [else
                    (define ntmp (generate))
                    (set! tmpcount (+ tmpcount 1))
@@ -126,7 +114,6 @@
 (define (eval-bexp tmpcount bexp)
   (cond [(symbol? bexp)
          (define res (tf-convert bexp))
-         ;(set! program (cons res program))
          (list res tmpcount)]
         [else
          (match bexp
@@ -149,10 +136,10 @@
   (match stmt
     [`(print ,s)
      (cond [(string? s)
-            (define nline (list 'print-string s)) ;; s is a string
+            (define nline (list 'print-string s))
             (set! program (cons nline program))
             (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
-           [else ;; must be aexp
+           [else
             (define res (eval-aexp tmpcount s))
             (set! tmpcount (+ (cadr res) tmpcount))
             (define nvar (car res))
@@ -160,46 +147,21 @@
                    (define ns (mod-sym s))
                    (define nline (list 'print-val ns))
                    (set! program (cons nline program))
-                   (if loop tmpcount (set! s-cur (- s-cur tmpcount)))] ;; means it is s
+                   (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
                   [else (define nline (list 'print-val nvar))
                         (set! program (cons nline program))
                         (if loop tmpcount (set! s-cur (- s-cur tmpcount)))])])]
-;            (set! tmpcount (+ tmpcount 1))
-;            (define nvar (generate tmpcount)) ;; increment tmpcount by 1
-;            (set! tmpcount (+ tmpcount (eval-aexp tmpcount s))) ;; changes program and returns new tmpcount
-;            (define res (list 'print nvar))
-;            (set! program (cons res program))
-;            (set! s-cur (- s-cur tmpcount))]
-;           [(symbol? s)
-;            (define mvar (mod-sym s))
-;            (define res (list 'print mvar))
-;            (set! program (cons res program))
-;            (set! s-cur (- s-cur tmpcount))]
-           
-;           [else (define res (list 'print s))
-;                 (set! program (cons res program))
-;                 (set! s-cur (- s-cur tmpcount))])]
     [`(set ,id ,exp)
      (cond [(aexp? exp)
             (define mid (mod-sym id))
             (define res (eval-aexp tmpcount exp))
             (set! tmpcount (+ (cadr res) tmpcount))
             (define var (car res))
-            (cond [(number? var)
-                   (if loop tmpcount (set! s-cur (- s-cur tmpcount)))] ;; means it is s
+            (cond [(char? var)
+                   (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
                   [else (define nline (list 'move mid var))
                         (set! program (cons nline program))
                         (if loop tmpcount (set! s-cur (- s-cur tmpcount)))])]
-            
-            
-;            (set! tmpcount (+ tmpcount 1))
-;            (define nvar (generate tmpcount))
-;            (set! tmpcount (eval-aexp nvar tmpcount exp))
-;            (define mid (mod-sym id))
-;            (define res (list 'move mid nvar))
-;            (set! program (cons res program))
-;            (set! scur (- scur tmpcount))]
-           
            [(bexp? exp)
             (define mid (mod-sym id))
             (define res (eval-bexp tmpcount exp))
@@ -208,36 +170,9 @@
             (define nline (list 'move mid var))
             (set! program (cons nline program))
             (if loop tmpcount (set! s-cur (- s-cur tmpcount)))])]
-
-            
-;            (set! tmpcount (+ tmpcount 1))
-;            (define nvar (generate tmpcount))
-;            (set! tmpcount (eval-bexp nvar tmpcount exp))
-;            (define mid (mod-sym id))
-;            (define res (list 'move mid nvar))
-;            (set! program (cons res program))
-;            (set! scur (- scur tmpcount))]
-;           [(symbol? exp) ;; check if exp is SIMPL var or bexp 'true / 'false
-;            (cond [(or (symbol=? exp 'true) (symbol=? exp 'false))
-;                   (define mid (mod-sym id))
-;                   (define nexp (tf-convert exp))
-;                   (define res (list 'move mid nexp))
-;                   (set! program (cons res program))
-;                   (set! s-cur (- s-cur tmpcount))]
-;                  [else (define mvar (mod-sym exp))
-;                        (define mid (mod-sym id))
-;                        (define res (list 'move mid mvar))
-;                        (set! program (cons res program))
-;                        (set! s-cur (- s-cur tmpcount))])]
-;           ;; Must be number
-;           [else (define res (list 'move id exp))
-;                 (set! program (cons res program))
-;                 (set! s-cur (- s-cur tmpcount))])]
     [`(seq ,lostmt ...)
      (set! tmpcount (eval-loop tmpcount lostmt))
      (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
-     ;(for/list ([stmt lostmt]) ;; Need to track tmpcount as a whole?
-       ;(interp loop stmt 0))] ;; Maybe solved, need test. TRYING TO SOLVE THE VOID ISSUE, SEE IN eval-stmts
     [`(iif ,bexp ,stmt1 ,stmt2)
      (define stmt1-start (create-label))
      (define stmt1-end (create-label))
@@ -270,9 +205,7 @@
      (set! program (cons nline program))
      (set! nline (list 'label loop-body))
      (set! program (cons nline program))
-     (set! tmpcount (eval-loop tmpcount lostmt)) ;; return the total tmpcount
-;     (for/list ([stmt lostmt])
-;       (interp #t stmt 0)) ;; potential issue with tmp variables?, need to track total in while?
+     (set! tmpcount (eval-loop tmpcount lostmt))
      (set! nline (list 'jump loop-top))
      (set! program (cons nline program))
      (set! nline (list 'label loop-end))
@@ -308,59 +241,70 @@
     (hash-set! var-ht (car var) (cadr var)))
   (eval-stmts stmts))
 
-(define test
-  '(var ((x 10) (y 1))
-	(while (> x 0)
-		(set y (* 2 y))
-		(set x (- x 1))
-		(print y)
-		(print "\n"))))
-;
-;(define test1
+;(define test
 ;  '(var ((x 10) (y 1))
-;        (print x)
-;        (print "\n")))
+;	(while (> x 0)
+;		(set y (* 2 y))
+;		(set x (- x 1))
+;		(print y)
+;		(print "\n"))))
+;;
+;;(define test1
+;;  '(var ((x 10) (y 1))
+;;        (print x)
+;;        (print "\n")))
+;;
+;;(define test2
+;;  '(var ((x 10) (y 1))
+;;        (print "\n")
+;;        (print x)))
+;;
+;;(define test3
+;;  '(var ((x 10) (y 1))
+;;        (seq
+;;         (set y (* 2 y))
+;;         (set x (- x 1))
+;;         (set y (* 2 2)))))
+;;
+;(define test4
+;  '(vars [(i 1) (j 0) (acc 0)]
+;  (while (<= i 100)
+;     (set j 1)
+;     (set acc 0)
+;     (while (< j i)
+;        (iif (= (mod i j) 0)
+;             (set acc (+ acc j))
+;             (skip))
+;        (set j (+ j 1)))
+;     (iif (= acc i)
+;          (seq
+;            (print i)
+;            (print "\n"))
+;          (skip))
+;     (set i (+ i 1)))))
+;;
+;;
 ;
-;(define test2
-;  '(var ((x 10) (y 1))
-;        (print "\n")
-;        (print x)))
+;(define test5
+;  '(vars [(x 10)] (> x 0)))
 ;
-;(define test3
-;  '(var ((x 10) (y 1))
+;(define test6
+;  '(vars [(x 10) (y 0)]
+;         (set y (+ 2 y))))
+;
+;(define test7
+;  '(vars [(i 0)] (set i (+ i 1))))
+;(define test8
+;  '(var [(x 10) (y 1)]
 ;        (seq
+;         (set y 1)
 ;         (set y (* 2 y))
 ;         (set x (- x 1))
 ;         (set y (* 2 2)))))
 ;
-(define test4
-  '(vars [(i 1) (j 0) (acc 0)]
-  (while (<= i 100)
-     (set j 1)
-     (set acc 0)
-     (while (< j i)
-        (iif (= (mod i j) 0)
-             (set acc (+ acc j))
-             (skip))
-        (set j (+ j 1)))
-     (iif (= acc i)
-          (seq
-            (print i)
-            (print "\n"))
-          (skip))
-     (set i (+ i 1)))))
-;
-;
-
-(define test5
-  '(vars [(x 10)] (> x 0)))
-
-(define test6
-  '(vars [(x 10) (y 0)]
-         (set y (+ 2 y))))
-(compile-simpl test4)
-(display tmps)
-(display var-ht)
+;(compile-simpl test8)
+;(display tmps)
+;(display var-ht)
 
 ;(compile-simpl test)
 ;(print-ht ref-table)
