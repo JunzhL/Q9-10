@@ -45,11 +45,11 @@
 (define (mod-sym sym)
   (string->symbol (string-append "_" (symbol->string sym))))
 
-(define (print-ht ht)
-  (for ([(key val) (in-hash ht)])
-    (display key)
-    (display ": ")
-    (displayln val)))
+;(define (print-ht ht)
+;  (for ([(key val) (in-hash ht)])
+;    (display key)
+;    (display ": ")
+;    (displayln val)))
 
 ;; Check aexp
 (define (aexp? exp)
@@ -70,43 +70,44 @@
         [else (define ncount (interp #t (first lostmt) 0))
               (eval-loop ncount (rest lostmt))]))
 
-(define (eval-seq lostmt)
-  (cond [(empty? lostmt) (void)]
-        [else (interp #f (first lostmt) 0)
-              (eval-seq (rest lostmt))]))
+;(define (eval-seq lostmt)
+;  (cond [(empty? lostmt) (void)]
+;        [else (interp #f (first lostmt) 0)
+;              (eval-seq (rest lostmt))]))
+
 ;; eval-aexp: tmpcount aexp
 ;; - update program and tmpcount
-;; - return (list var/tmp tmpcount)
+;; - return (list type tmpcount placeholder)
 (define (eval-aexp tmpcount aexp)
   (cond [(number? aexp)
          (list aexp tmpcount aexp)]
         [(symbol? aexp)
          (define nid (mod-sym aexp))
-         (list nid tmpcount aexp)]
+         (list aexp tmpcount nid)]
         [else
          (match aexp
            [`(,op ,aexp1 ,aexp2)
             (define nop (hash-ref aexpop-ht op))
             (define res1 (eval-aexp tmpcount aexp1))
-            (define var1 (caddr res1))
+            (define var1 (car res1))
             (set! tmpcount (+ (cadr res1) tmpcount))
             (define res2 (eval-aexp tmpcount aexp2))
-            (define var2 (caddr res2))
+            (define var2 (car res2))
             (set! tmpcount (+ (cadr res2) tmpcount))
             (cond [(and (number? var1) (hash-has-key? var-ht var2))
-                   (define res (list nop (car res2) (car res1) (car res2)))
+                   (define res (list nop (caddr res2) (caddr res1) (caddr res2)))
                    (set! program (cons res program))
-                   (list #\0 tmpcount)]
+                   (list #\0 tmpcount (caddr res2))]
                   [(and (number? var2) (hash-has-key? var-ht var1))
-                   (define res (list nop (car res1) (car res1) (car res2)))
+                   (define res (list nop (caddr res1) (caddr res1) (caddr res2)))
                    (set! program (cons res program))
-                   (list #\0 tmpcount)]
+                   (list #\0 tmpcount (caddr res1))]
                   [else
                    (define ntmp (generate))
                    (set! tmpcount (+ tmpcount 1))
-                   (define res (list nop ntmp (car res1) (car res2)))
+                   (define res (list nop ntmp (caddr res1) (caddr res2)))
                    (set! program (cons res program))
-                   (list ntmp tmpcount)])])]))
+                   (list ntmp tmpcount ntmp)])])]))
 
 ;; eval-bexp: tmpcount bexp
 ;; - update program and tmpcount
@@ -122,10 +123,10 @@
             (define ntmp (generate))
             (set! tmpcount (+ tmpcount 1))
             (define res1 (eval-aexp tmpcount aexp1))
-            (define var1 (car res1))
+            (define var1 (caddr res1))
             (set! tmpcount (+ (cadr res1) tmpcount))
             (define res2 (eval-aexp tmpcount aexp2))
-            (define var2 (car res2))
+            (define var2 (caddr res2))
             (set! tmpcount (+ (cadr res2) tmpcount))
             (define res (list nop ntmp var1 var2))
             (set! program (cons res program))
@@ -142,7 +143,7 @@
            [else
             (define res (eval-aexp tmpcount s))
             (set! tmpcount (+ (cadr res) tmpcount))
-            (define nvar (car res))
+            (define nvar (caddr res))
             (cond [(number? nvar)
                    (define ns (mod-sym s))
                    (define nline (list 'print-val ns))
@@ -301,8 +302,15 @@
 ;         (set y (* 2 y))
 ;         (set x (- x 1))
 ;         (set y (* 2 2)))))
+
+;(define test9
+;  '(var [(x 10) (y 1)]
+;        (set x (* (+ 2 x) 4))
+;        (set x (* (+ x 3) 5))
+;        (set x (* (+ 2 y) 4))
+;        ))
 ;
-;(compile-simpl test8)
+;(compile-simpl test4)
 ;(display tmps)
 ;(display var-ht)
 
