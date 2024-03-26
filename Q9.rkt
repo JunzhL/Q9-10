@@ -1,5 +1,7 @@
 #lang racket
 
+;; Group work done by Elyn Huang, Junzhang Luo
+
 (define tmps (make-hash))
 (define var-ht (make-hash))
 (define program empty)
@@ -70,6 +72,16 @@
         [else (define ncount (interp #t (first lostmt) 0))
               (eval-loop ncount (rest lostmt))]))
 
+(define (eval-lobexp tmpcount lobexp lontmps)
+  (cond [(empty? lobexp) (list lontmps tmpcount)]
+        [else 
+         (define res (eval-bexp tmpcount (first lobexp)))
+              (define ncount (cadr res))
+              (define ntmp (car res))
+              (set! tmpcount ncount)
+              (eval-lobexp tmpcount (rest lobexp) (cons ntmp lontmps))]))
+
+
 ;(define (eval-seq lostmt)
 ;  (cond [(empty? lostmt) (void)]
 ;        [else (interp #f (first lostmt) 0)
@@ -118,6 +130,26 @@
          (list res tmpcount)]
         [else
          (match bexp
+           [`(and ,lobexp ...)
+            (define ntmp (generate))
+            (set! tmpcount (+ tmpcount 1))
+            (define res (eval-lobexp tmpcount lobexp empty))
+            (define ncount (cadr res))
+            (set! tmpcount ncount)
+            (define lontmp (car res))
+            (define nline (cons 'land (cons ntmp lontmp)))
+            (set! program (cons nline program))
+            (list ntmp tmpcount)]
+           [`(or ,lobexp ...)
+            (define ntmp (generate))
+            (set! tmpcount (+ tmpcount 1))
+            (define res (eval-lobexp tmpcount lobexp empty))
+            (define ncount (cadr res))
+            (set! tmpcount ncount)
+            (define lontmp (car res))
+            (define nline (cons 'lor (cons ntmp lontmp)))
+            (set! program (cons nline program))
+            (list ntmp tmpcount)]
            [`(,op ,aexp1 ,aexp2)
             (define nop (hash-ref bexpop-ht op))
             (define ntmp (generate))
@@ -130,6 +162,16 @@
             (set! tmpcount (+ (cadr res2) tmpcount))
             (define res (list nop ntmp var1 var2))
             (set! program (cons res program))
+            (list ntmp tmpcount)]
+           [`(,op ,aexp)
+            (define nop (hash-ref bexpop-ht op))
+            (define ntmp (generate))
+            (set! tmpcount (+ tmpcount 1))
+            (define res (eval-bexp tmpcount aexp))
+            (define var (car res))
+            (set! tmpcount (+ (cadr res) tmpcount))
+            (define nline (list nop ntmp var))
+            (set! program (cons nline program))
             (list ntmp tmpcount)])]))
            
 ;; interp a stmt
@@ -138,6 +180,10 @@
     [`(print ,s)
      (cond [(string? s)
             (define nline (list 'print-string s))
+            (set! program (cons nline program))
+            (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
+           [(number? s)
+            (define nline (list 'print-val s))
             (set! program (cons nline program))
             (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
            [else
@@ -234,6 +280,7 @@
 
 ;; Assume the sexp is a list
 (define (compile-simpl sexp)
+  (set! program empty)
   (define vars (cadr sexp))
   (define stmts (cddr sexp))
   (for ([var vars])
@@ -255,10 +302,10 @@
 ;;        (print x)
 ;;        (print "\n")))
 ;;
-;;(define test2
-;;  '(var ((x 10) (y 1))
-;;        (print "\n")
-;;        (print x)))
+;(define test2
+;  '(var ((x 10) (y 1))
+;        (print "\n")
+;        (print 1)))
 ;;
 ;;(define test3
 ;;  '(var ((x 10) (y 1))
@@ -310,15 +357,146 @@
 ;        (set x (* (+ 2 y) 4))
 ;        ))
 ;
-;(compile-simpl test4)
+;(define test10
+;  '(vars [(x 10) (y 131)]
+;         (iif (and (= x y) (< x y))
+;          (print 1111)
+;          (print 2222))))
+
+;(define first-test '(vars [(x 0) (y 1) (z 2)]
+;                          (print y)))
+;
+;(define first-arith-test '(vars [(a 1) (b 2)]
+;                                (set a b)
+;                                (print (+ a b))))
+;
+;(define basic-test '(vars [(x 10) (y 1)]
+;                          (while (> x 0)
+;                                 (set y (* 2 y))
+;                                 (set x (- x 1)))
+;                          (print y)))
+;
+;(define iff-even-odd-test '(vars [(a 17) (b 5)]
+;                                 (iif (= (mod a 2) 0)
+;                                      (iif (= (mod b 2) 1)
+;                                           (seq (print "a even, b odd: (a + b) = ")
+;                                                (print (+ a b)))
+;                                           (seq (print "a even, b even: (a - b) = ")
+;                                                (print (- a b))))
+;                                      (iif (= (mod b 2) 0)
+;                                           (seq (print "a odd, b even: (a * b) = ")
+;                                                (print (* a b)))
+;                                           (seq (print "a odd, b odd: (a / b) = ")
+;                                                (print (div a b)))))
+;                                 (print "\n")
+;                                 (print a)
+;                                 (print "\n")
+;                                 (print b)
+;                                 (print "\nProgram done!\n")))
+;
+;(define perfect-num-test '(vars [(i 1) (j 0) (acc 0)]
+;                                (while (<= i 10000)
+;                                       (set j 1)
+;                                       (set acc 0)
+;                                       (while (< j i)
+;                                              (iif (= (mod i j) 0)
+;                                                   (set acc (+ acc j))
+;                                                   (skip))
+;                                              (set j (+ j 1)))
+;                                       (iif (= acc i)
+;                                            (seq
+;                                             (print i)
+;                                             (print "\n"))
+;                                            (skip))
+;                                       (set i (+ i 1)))))
+;
+;(define var-name-test '(vars [(TMP0 2) (LABEL0 1) (TMP1 2) (LABEL1 1)]
+;                             (iif (= (+ (+ TMP0 TMP1) LABEL0) 5)
+;                                  (print (+ (* LABEL0 TMP0) (- TMP1 LABEL1)))
+;                                  (skip))))
+;
+;(define fibonacci-test '(vars [(a 1) (b 0) (i 0) (n 100)]
+;                              (while (<= i n)
+;                                     (print b)
+;                                     (print "\n")
+;                                     (set a (+ a b))
+;                                     (set b (- a b))
+;                                     (set i (+ i 1)))))
+;
+;(define slow-C10-test '(vars [(m 1) (n 100) (num -1) (TMP 0) (rev 0) (i 2) (squarefree 1)]
+;                             (set num m)
+;                             (while (<= num n)
+;                                    (set TMP num)
+;                                    (set rev 0)
+;                                    (while (> TMP 0)
+;                                           (set rev (+ (* 10 rev) (mod TMP 10)))
+;                                           (set TMP (div TMP 10)))
+;                                    (set squarefree 1)
+;                                    (set i 2)
+;                                    (while (and (= squarefree 1) (<= (* i i) num))
+;                                           (iif (= (mod num (* i i)) 0)
+;                                                (set squarefree 0)
+;                                                (skip))
+;                                           (set i (+ i 1)))
+;                                    (iif (and (= rev num) (= squarefree 1))
+;                                         (seq (print num)
+;                                              (print "\n"))
+;                                         (skip))
+;                                    (set num (+ num 1)))))
+;
+;(define simple-bool-test '(vars [(numnumbers 0) (max 5)]
+;                                (while (and (not (>= numnumbers max)))
+;                                       (set numnumbers (+ numnumbers 1))
+;                                       (print numnumbers))))
+;
+;(define bool-jungle-test '(vars [(a 172) (b 9821) (c 173) (d 10920) (e 71) (f 1227) (g 912) (numnumbers 0) (max 10)]
+;                                (while
+;                                 (and (or (>= ( * 8 a) (mod (+ b c) e))
+;                                          (and (<= 12 g) (> (mod (* (+ c d) b) f) (mod (* a g) b)))
+;                                          (= numnumbers 0))
+;                                      (not (>= numnumbers max)))
+;                                       (iif (<= a c)
+;                                            (seq
+;                                             (print "a <= c case\n")
+;                                             (set a (+ (mod (* a d) f) (div b c))))
+;                                            (seq
+;                                             (print "a > c case\n")
+;                                             (set c (* (- (* d e) g) (mod b (+ a f))))))
+;                                       (set d (+ d (* (mod b e) (div b e))))
+;                                       (iif (>= d f)
+;                                            (seq
+;                                             (print "d >= f case\n")
+;                                             (set f (+ (* 9 a) (* (mod f e) (div d f))))
+;                                             (set d (- 1901203 (* (mod (* a (* b e)) (+ f d)) c))))
+;                                            (seq
+;                                             (print "d < f case\n")
+;                                             (set d (* (div (* 6 (+ f g)) a) (+ (mod (* g 171) (+ b c)) (+ a 15))))))
+;                                       (set numnumbers (+ numnumbers 1))
+;                                       (print a) (print " ") (print b) (print " ") (print c) (print " ") (print d)
+;                                       (print " ") (print e) (print " ") (print f) (print " ") (print g) (print "\n"))))
+;
+;(define bool-alg-test '(vars [(a 2) (b 3) (c 12) (TMP 0) (rand 0)]
+;                             (while (not (and (= (mod a 5) 0) (> b 310) (= (mod (* c 8) 9) 0)))
+;                                    (iif (= (mod a 5) 0)
+;                                         (seq (set TMP a)
+;                                              (set a b)
+;                                              (set b TMP))
+;                                         (skip))
+;                                    (iif (or (not (> b 310)) (= (mod c 9) 0))
+;                                         (seq (set rand (mod (mod (* (+ c b) 78162848712687993) 1000000007) 355))
+;                                              (set b (+ b rand))
+;                                              (set c (+ c rand)))
+;                                         (skip))
+;                                    (set a (+ a 1)) (set b (+ b 1)) (set c (+ c 1))
+;                                    (print a) (print " ") (print b) (print " ") (print c) (print "\n"))
+;                             (print a) (print " ") (print b) (print " ") (print c) (print "\n")))
+;
+;(compile-simpl fibonacci-test)
+;(compile-simpl fibonacci-test)
+
 ;(display tmps)
 ;(display var-ht)
 
 ;(compile-simpl test)
 ;(print-ht ref-table)
 ;(display program)
-
-
-
-
-
