@@ -53,7 +53,8 @@
 ;; CHECKED TODO: write a mod-arg 
 ;; CHECKED TODO: mod-var
 (define (add-fun-name fn sym)
-  (string->symbol (string-append (symbol->string fn) (symbol->string sym))))
+  (string->symbol (string-append (symbol->string fn)
+                                 (string-append "_" (symbol->string sym)))))
 
 ;(define (print-ht ht)
 ;  (for ([(key val) (in-hash ht)])
@@ -63,7 +64,8 @@
 
 ;; Check aexp
 (define (aexp? exp)
-  (cond [(list? exp) (hash-has-key? aexpop-ht (first exp))]
+  (cond [(list? exp) (or (hash-has-key? aexpop-ht (first exp))
+                         (hash-has-key? fun-name-ht (first exp)))]
         [(symbol? exp) (not (or (symbol=? exp 'true) (symbol=? exp 'false)))]
         [else (number? exp)]))
 
@@ -92,48 +94,68 @@
 ;; eval-aexp: tmpcount aexp
 ;; - update program and tmpcount
 ;; - return (list type tmpcount placeholder)
-(define (eval-aexp tmpcount aexp)
+(define (eval-aexp fun tmpcount aexp)
   (cond [(number? aexp)
          (list aexp tmpcount aexp)]
         [(symbol? aexp)
-         (define res (hash-ref aexp))
-         (define nid (car res))
-         (list aexp tmpcount nid)]
+         (cond [(hash-has-key? tmps-ht aexp)
+                (define res (hash-ref tmps-ht aexp))
+                (define nid (car res))
+                (list aexp tmpcount nid)]
+               [else
+                (define res (hash-ref vargs-ht aexp))
+                (define nid (list (car res) 'FP))
+                (list aexp tmpcount nid)])]
         ;; Can we assume the function is pre-defined
         [(hash-has-key? fun-name-ht (first aexp))
         ; TODO: need to have the function in hash first
         ;;TODO: check there are the right number of parameters being passed in to the function
-        (define cur_fun (hash-ref (first aexp)))
+        (define cur_fun (hash-ref fun-name-ht (first aexp)))
         (define arg-num (cadr cur_fun))
+        (define nfun-name (car cur_fun))
         (define params (rest aexp))
         (define params-len (length params))
-        (cond [(= arg-num params-len) 
+        
+        (cond [(= arg-num params-len)
+               (define arg-lists empty)
                (define tmp-count 0) ;; Asume SP points to the end of function
                (for [(param params)]
                  ;; Create tmp variables at the end of current stack, relative to SP
                  ;; For passing arguments to the called function
                  ;; TODO: make sure parameters are in right order
-                 (define 
-                 (set! program (cons (list ('move (tmp-count 'SP) param)))
-                 (set! tmp-count (add tmp-count 1)))
+                 (define param-res (eval-aexp #t tmpcount param))
+                 (set! arg-lists (cons (third param-res) arg-lists)))
+               
+               (for [(param arg-lists)]
+                 ;(define nparam (add-fun-name nfun-name param))
+                 (set! program (cons (list 'move (list tmp-count 'SP) param) program))
+                 (set! tmp-count (- tmp-count 1)))
+               (set! program (cons (list 'add 'SP 'SP params-len) program))
                ;; TODO: not sure if moving FP and SP is needed
-               ;;(set! SP (add SP tmp-count))
-               (set! program (cons '(jsr RETURN-ADDR (first aexp)) program))]
+               
+               ;(set! program (cons (list 'move 'FP 'SP) program))
+               (set! program (cons (list 'jsr 'RETURN-ADDR (first aexp)) program))
+               (set! program (cons (list 'sub 'SP 'SP params-len) program))
+               (list 'RETURN-VAL tmpcount 'RETURN-VAL)]
         ;;(set! SP (sub SP tmp-count))
-              [else (error "incorrect number of arguments")])
-        
-        
+              [else (error "incorrect number of arguments")])]
         [(hash-has-key? aexpop-ht (first aexp))
          (match aexp
            [`(,op ,aexp1 ,aexp2)
             (define nop (hash-ref aexpop-ht op))
-            (define res1 (eval-aexp tmpcount aexp1))
+            (define res1 (eval-aexp #f tmpcount aexp1))
             (define var1 (car res1))
             (set! tmpcount (+ (cadr res1) tmpcount))
-            (define res2 (eval-aexp tmpcount aexp2))
+            (define res2 (eval-aexp #f tmpcount aexp2))
             (define var2 (car res2))
             (set! tmpcount (+ (cadr res2) tmpcount))
-            (cond [(and (number? var1) (hash-has-key? vargs-ht var2))
+            (cond [fun
+                   (define ntmp (generate))
+                   (set! tmpcount (+ tmpcount 1))
+                   (define res (list nop ntmp (caddr res1) (caddr res2)))
+                   (set! program (cons res program))
+                   (list ntmp tmpcount ntmp)]
+                  [(and (number? var1) (hash-has-key? vargs-ht var2))
                    (define res (list nop (caddr res2) (caddr res1) (caddr res2)))
                    (set! program (cons res program))
                    (list #\0 tmpcount (caddr res2))]
@@ -182,10 +204,10 @@
             (define nop (hash-ref bexpop-ht op))
             (define ntmp (generate))
             (set! tmpcount (+ tmpcount 1))
-            (define res1 (eval-aexp tmpcount aexp1))
+            (define res1 (eval-aexp #f tmpcount aexp1))
             (define var1 (caddr res1))
             (set! tmpcount (+ (cadr res1) tmpcount))
-            (define res2 (eval-aexp tmpcount aexp2))
+            (define res2 (eval-aexp #f tmpcount aexp2))
             (define var2 (caddr res2))
             (set! tmpcount (+ (cadr res2) tmpcount))
             (define res (list nop ntmp var1 var2))
@@ -207,10 +229,11 @@
   (match stmt
     [`(return ,x)
     ;;TODO: after x is evaluated, x needs to be stored in the global RETURN-VAL
-    (define res (eval-aexp tmpcount x)) ;; TODO: assume return is the last statement to call
-    (set! tmpcount (+ cadr res) tmpcount)
+    (define res (eval-aexp #f tmpcount x)) ;; TODO: assume return is the last statement to call
+    ;; (list var tmpcount var)
+    (set! tmpcount (+ (cadr res) tmpcount))
     ;; the previous line will return the name to move FP to
-    (set! program (cons (list 'move 'RETURN-VAL (list ____ 'FP)) program))
+    (set! program (cons (list 'move 'RETURN-VAL (caddr res)) program))
     (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
     [`(print ,s)
      (cond [(string? s)
@@ -222,7 +245,7 @@
             (set! program (cons nline program))
             (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
            [else
-            (define res (eval-aexp tmpcount s))
+            (define res (eval-aexp #f tmpcount s))
             (set! tmpcount (+ (cadr res) tmpcount))
             (define nvar (caddr res))
             (cond [(number? nvar)
@@ -235,8 +258,11 @@
                         (if loop tmpcount (set! s-cur (- s-cur tmpcount)))])])]
     [`(set ,id ,exp)
      (cond [(aexp? exp)
-            (define mid (mod-sym id))
-            (define res (eval-aexp tmpcount exp))
+            (define mid 'x)
+            (cond [(hash-has-key? tmps-ht id) (set! mid id)]
+                  [else (define res (hash-ref vargs-ht id))
+                        (set! mid (list (car res) 'FP))])
+            (define res (eval-aexp #f tmpcount exp))
             (set! tmpcount (+ (cadr res) tmpcount))
             (define var (car res))
             (cond [(char? var)
@@ -245,7 +271,10 @@
                         (set! program (cons nline program))
                         (if loop tmpcount (set! s-cur (- s-cur tmpcount)))])]
            [(bexp? exp)
-            (define mid (mod-sym id))
+            (define mid 'x)
+            (cond [(hash-has-key? tmps-ht id) (set! mid id)]
+                  [else (define res (hash-ref vargs-ht id))
+                        (set! mid (list (car res) 'FP))])
             (define res (eval-bexp tmpcount exp))
             (set! tmpcount (+ (cadr res) tmpcount))
             (define var (car res))
@@ -341,12 +370,13 @@
   (define arg-counter 0)
   ;; (hash-set! fun-name-ht fun-name (list nfun-name args-len))
   (for ([arg args])
-    (if (hash-has-key? vargs-ht arg) (error "duplicate")
-        (set! arg-counter (- arg-counter 1))
-        (define narg (add-fun-name nfun-name arg))
-        (hash-set! vargs-ht arg (list narg arg-counter))
-        (define arg-line (list 'const narg arg-counter))
-        (set! program (cons arg-line program))))
+    (cond [(hash-has-key? vargs-ht arg) (error "duplicate")]
+          [else
+           (set! arg-counter (- arg-counter 1))
+           (define narg (add-fun-name nfun-name arg))
+           (hash-set! vargs-ht arg (list narg arg-counter))
+           (define arg-line (list 'const narg arg-counter))
+           (set! program (cons arg-line program))]))
   ;; FP
   (define nFP (add-fun-name nfun-name 'FP))
   (set! program (cons (list 'const nFP 0) program))
@@ -356,13 +386,16 @@
   ;; Local vars
   (define vars (second (third fun)))
   (define vars-len (length vars))
+  (define var-count 1)
   (for ([var vars])
     (define var-name (car var))
-    (if (hash-has-key? vargs-ht var-name) (error "duplicate")
-        (define nvar-name (add-fun-name nfun-name var-name))
-        (define value (cadr var))
-        (hash-set! vargs-ht var-name (list nvar-name value)) ;; (list new_name init_val)
-        (set! program (cons (list 'const nvar-name value) program))))
+    (cond [(hash-has-key? vargs-ht var-name) (error "duplicate")]
+          [else
+           (define nvar-name (add-fun-name nfun-name var-name))
+           (define value (cadr var))
+           (hash-set! vargs-ht var-name (list nvar-name value)) ;; (list new_name init_val)
+           (set! var-count (+ var-count 1))
+           (set! program (cons (list 'const nvar-name var-count) program))]))
   ;; Stack frame size
   (define size (+ vars-len 2))
   (define size-name (add-fun-name nfun-name 'SIZE))
@@ -445,7 +478,6 @@
 ;         (set! program (cons '(jump RETURN-ADDR)))]))
 
 (define (compile-program lofun)
-  (set! program empty)
   (cond [(empty? lofun)
          (insert-data) ;; insert all tmp variables initialized
          (set! program (cons '(data RETURN-VAL 0) program))
@@ -454,235 +486,38 @@
          (set! program (cons '(data SP END) program))
          (set! program (cons '(label END) program))
          (cond [(hash-has-key? fun-name-ht 'main) ;; check for main existence
+                (set! program (reverse program))
                 (set! program (cons '(jump main) program))
-                (reverse program)]
+                program]
                [else
+                (set! program (reverse program))
                 (set! program (cons '(halt) program))
-                (reverse program)])]
-        [else (compile-function (first lofun)) (compile-program (rest lofun))]))
+                program])]
+        [else 
+         (compile-function (first lofun)) (compile-program (rest lofun))]))
 
 (define (compile-simpl lofun)
+  (set! program empty)
   (for ([fun lofun])
     (define f-name (car (cadr fun)))
-    (define arg-len (cdr (cadr fun)))
+    (define arg-len (length (cdr (cadr fun))))
     (cond [(hash-has-key? fun-name-ht f-name) (error "duplicate")]
           [else (define nf-name (mod-sym f-name))
                 (hash-set! fun-name-ht f-name (list nf-name arg-len))]))
   (compile-program lofun))
 
-;    (for [(func losexp)]
-;      (compile-function func))
-    ;; Global datas
+;(define test1
+;  '((fun (countdown n)
+;         (vars [(result 0)]
+;               (print n)
+;               (print "\n")
+;               (iif (> n 0)
+;                    (set result (countdown (- n 1)))
+;                    (skip))
+;               (return result)))
+;    (fun (main) 
+;         (vars [(n 10)] 
+;               (return (countdown n))))))
+;
+;(compile-simpl test1)
     
-
-;(define test
-;  '(var ((x 10) (y 1))
-;	(while (> x 0)
-;		(set y (* 2 y))
-;		(set x (- x 1))
-;		(print y)
-;		(print "\n"))))
-;;
-;;(define test1
-;;  '(var ((x 10) (y 1))
-;;        (print x)
-;;        (print "\n")))
-;;
-;(define test2
-;  '(var ((x 10) (y 1))
-;        (print "\n")
-;        (print 1)))
-;;
-;;(define test3
-;;  '(var ((x 10) (y 1))
-;;        (seq
-;;         (set y (* 2 y))
-;;         (set x (- x 1))
-;;         (set y (* 2 2)))))
-;;
-;(define test4
-;  '(vars [(i 1) (j 0) (acc 0)]
-;  (while (<= i 100)
-;     (set j 1)
-;     (set acc 0)
-;     (while (< j i)
-;        (iif (= (mod i j) 0)
-;             (set acc (+ acc j))
-;             (skip))
-;        (set j (+ j 1)))
-;     (iif (= acc i)
-;          (seq
-;            (print i)
-;            (print "\n"))
-;          (skip))
-;     (set i (+ i 1)))))
-;;
-;;
-;
-;(define test5
-;  '(vars [(x 10)] (> x 0)))
-;
-;(define test6
-;  '(vars [(x 10) (y 0)]
-;         (set y (+ 2 y))))
-;
-;(define test7
-;  '(vars [(i 0)] (set i (+ i 1))))
-;(define test8
-;  '(var [(x 10) (y 1)]
-;        (seq
-;         (set y 1)
-;         (set y (* 2 y))
-;         (set x (- x 1))
-;         (set y (* 2 2)))))
-
-;(define test9
-;  '(var [(x 10) (y 1)]
-;        (set x (* (+ 2 x) 4))
-;        (set x (* (+ x 3) 5))
-;        (set x (* (+ 2 y) 4))
-;        ))
-;
-;(define test10
-;  '(vars [(x 10) (y 131)]
-;         (iif (and (= x y) (< x y))
-;          (print 1111)
-;          (print 2222))))
-
-;(define first-test '(vars [(x 0) (y 1) (z 2)]
-;                          (print y)))
-;
-;(define first-arith-test '(vars [(a 1) (b 2)]
-;                                (set a b)
-;                                (print (+ a b))))
-;
-;(define basic-test '(vars [(x 10) (y 1)]
-;                          (while (> x 0)
-;                                 (set y (* 2 y))
-;                                 (set x (- x 1)))
-;                          (print y)))
-;
-;(define iff-even-odd-test '(vars [(a 17) (b 5)]
-;                                 (iif (= (mod a 2) 0)
-;                                      (iif (= (mod b 2) 1)
-;                                           (seq (print "a even, b odd: (a + b) = ")
-;                                                (print (+ a b)))
-;                                           (seq (print "a even, b even: (a - b) = ")
-;                                                (print (- a b))))
-;                                      (iif (= (mod b 2) 0)
-;                                           (seq (print "a odd, b even: (a * b) = ")
-;                                                (print (* a b)))
-;                                           (seq (print "a odd, b odd: (a / b) = ")
-;                                                (print (div a b)))))
-;                                 (print "\n")
-;                                 (print a)
-;                                 (print "\n")
-;                                 (print b)
-;                                 (print "\nProgram done!\n")))
-;
-;(define perfect-num-test '(vars [(i 1) (j 0) (acc 0)]
-;                                (while (<= i 10000)
-;                                       (set j 1)
-;                                       (set acc 0)
-;                                       (while (< j i)
-;                                              (iif (= (mod i j) 0)
-;                                                   (set acc (+ acc j))
-;                                                   (skip))
-;                                              (set j (+ j 1)))
-;                                       (iif (= acc i)
-;                                            (seq
-;                                             (print i)
-;                                             (print "\n"))
-;                                            (skip))
-;                                       (set i (+ i 1)))))
-;
-;(define var-name-test '(vars [(TMP0 2) (LABEL0 1) (TMP1 2) (LABEL1 1)]
-;                             (iif (= (+ (+ TMP0 TMP1) LABEL0) 5)
-;                                  (print (+ (* LABEL0 TMP0) (- TMP1 LABEL1)))
-;                                  (skip))))
-;
-;(define fibonacci-test '(vars [(a 1) (b 0) (i 0) (n 100)]
-;                              (while (<= i n)
-;                                     (print b)
-;                                     (print "\n")
-;                                     (set a (+ a b))
-;                                     (set b (- a b))
-;                                     (set i (+ i 1)))))
-;
-;(define slow-C10-test '(vars [(m 1) (n 100) (num -1) (TMP 0) (rev 0) (i 2) (squarefree 1)]
-;                             (set num m)
-;                             (while (<= num n)
-;                                    (set TMP num)
-;                                    (set rev 0)
-;                                    (while (> TMP 0)
-;                                           (set rev (+ (* 10 rev) (mod TMP 10)))
-;                                           (set TMP (div TMP 10)))
-;                                    (set squarefree 1)
-;                                    (set i 2)
-;                                    (while (and (= squarefree 1) (<= (* i i) num))
-;                                           (iif (= (mod num (* i i)) 0)
-;                                                (set squarefree 0)
-;                                                (skip))
-;                                           (set i (+ i 1)))
-;                                    (iif (and (= rev num) (= squarefree 1))
-;                                         (seq (print num)
-;                                              (print "\n"))
-;                                         (skip))
-;                                    (set num (+ num 1)))))
-;
-;(define simple-bool-test '(vars [(numnumbers 0) (max 5)]
-;                                (while (and (not (>= numnumbers max)))
-;                                       (set numnumbers (+ numnumbers 1))
-;                                       (print numnumbers))))
-;
-;(define bool-jungle-test '(vars [(a 172) (b 9821) (c 173) (d 10920) (e 71) (f 1227) (g 912) (numnumbers 0) (max 10)]
-;                                (while
-;                                 (and (or (>= ( * 8 a) (mod (+ b c) e))
-;                                          (and (<= 12 g) (> (mod (* (+ c d) b) f) (mod (* a g) b)))
-;                                          (= numnumbers 0))
-;                                      (not (>= numnumbers max)))
-;                                       (iif (<= a c)
-;                                            (seq
-;                                             (print "a <= c case\n")
-;                                             (set a (+ (mod (* a d) f) (div b c))))
-;                                            (seq
-;                                             (print "a > c case\n")
-;                                             (set c (* (- (* d e) g) (mod b (+ a f))))))
-;                                       (set d (+ d (* (mod b e) (div b e))))
-;                                       (iif (>= d f)
-;                                            (seq
-;                                             (print "d >= f case\n")
-;                                             (set f (+ (* 9 a) (* (mod f e) (div d f))))
-;                                             (set d (- 1901203 (* (mod (* a (* b e)) (+ f d)) c))))
-;                                            (seq
-;                                             (print "d < f case\n")
-;                                             (set d (* (div (* 6 (+ f g)) a) (+ (mod (* g 171) (+ b c)) (+ a 15))))))
-;                                       (set numnumbers (+ numnumbers 1))
-;                                       (print a) (print " ") (print b) (print " ") (print c) (print " ") (print d)
-;                                       (print " ") (print e) (print " ") (print f) (print " ") (print g) (print "\n"))))
-;
-;(define bool-alg-test '(vars [(a 2) (b 3) (c 12) (TMP 0) (rand 0)]
-;                             (while (not (and (= (mod a 5) 0) (> b 310) (= (mod (* c 8) 9) 0)))
-;                                    (iif (= (mod a 5) 0)
-;                                         (seq (set TMP a)
-;                                              (set a b)
-;                                              (set b TMP))
-;                                         (skip))
-;                                    (iif (or (not (> b 310)) (= (mod c 9) 0))
-;                                         (seq (set rand (mod (mod (* (+ c b) 78162848712687993) 1000000007) 355))
-;                                              (set b (+ b rand))
-;                                              (set c (+ c rand)))
-;                                         (skip))
-;                                    (set a (+ a 1)) (set b (+ b 1)) (set c (+ c 1))
-;                                    (print a) (print " ") (print b) (print " ") (print c) (print "\n"))
-;                             (print a) (print " ") (print b) (print " ") (print c) (print "\n")))
-;
-;(compile-simpl fibonacci-test)
-;(compile-simpl fibonacci-test)
-
-;(display tmps)
-;(display var-ht)
-
-;(compile-simpl test)
-;(print-ht ref-table)
-;(display program)
