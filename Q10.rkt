@@ -262,9 +262,12 @@
             (cond [(hash-has-key? tmps-ht id) (set! mid id)]
                   [else (define res (hash-ref vargs-ht id))
                         (set! mid (list (car res) 'FP))])
+            
             (define res (eval-aexp #f tmpcount exp))
+
             (set! tmpcount (+ (cadr res) tmpcount))
-            (define var (car res))
+            (define var (caddr res))
+
             (cond [(char? var)
                    (if loop tmpcount (set! s-cur (- s-cur tmpcount)))]
                   [else (define nline (list 'move mid var))
@@ -487,7 +490,7 @@
          (set! program (cons '(label END) program))
          (cond [(hash-has-key? fun-name-ht 'main) ;; check for main existence
                 (set! program (reverse program))
-                (set! program (cons '(jump main) program))
+                (set! program (cons '(jump _main) program))
                 program]
                [else
                 (set! program (reverse program))
@@ -506,18 +509,64 @@
                 (hash-set! fun-name-ht f-name (list nf-name arg-len))]))
   (compile-program lofun))
 
-;(define test1
-;  '((fun (countdown n)
-;         (vars [(result 0)]
-;               (print n)
-;               (print "\n")
-;               (iif (> n 0)
-;                    (set result (countdown (- n 1)))
-;                    (skip))
-;               (return result)))
-;    (fun (main) 
-;         (vars [(n 10)] 
-;               (return (countdown n))))))
+(define arguments-error-test
+'((fun (add a b) (vars [] (return (+ a b))))
+  (fun (main) (vars [] (return (add 1))))))
+
+(define arguments-duplicate-error-test
+'((fun (add a a) (vars [] (return (+ a a))))))
+
+(define local-duplicate-error-test
+'((fun (add a b) (vars [(res 0) (res 1)] (return res)))))
+
+(define mix-duplicate-error-test
+'((fun (add a b) (vars [(a 0) (res 1)] (return res)))))
+
+(define return-error-test
+'((fun (main) (vars [(res 0)] (set res (+ 1 1)) (seq (set res (+ 2 2)) (set res (+ 2 3)))))))
+
+(define test1
+  '((fun (countdown n)
+         (vars [(result 0)]
+               (print n)
+               (print "\n")
+               (iif (> n 0)
+                    (set result (countdown (- n 1)))
+                    (skip))
+               (return result)))))
+    ;;; (fun (main) 
+    ;;;      (vars [(n 10)] 
+    ;;;            (return (countdown n))))))
 ;
-;(compile-simpl test1)
+
+(define varg-offset-test 
+'((fun (main) (vars [(res 0) (a 1) (b 2)] (set res a) (return res)))))
+
+(define test4
+  `((fun (main) (vars [(n 10) (fj 1) (fjm1 0) (t 0) (ans 0)]
+         (iif (= n 0) 
+              (set ans fjm1)
+              (seq
+               (while (> n 1) 
+                      (print n)
+                      (print "\n")
+                      (set t fj) ;; t = 0
+                      (set fj (+ fj fjm1)) ;; fj = 1
+                      (set fjm1 t) ;; fjm1 = 0
+                      (set n (- n 1))) ;; n 8
+               (set ans fj)))
+         (print ans)
+         (return 0)))))
+
+(define main-test 
+'((fun (main)
+  (vars [(result 0)]
+    (return result)))))
+
+;;; Run code
+
+(compile-simpl main-test)
+;;; (define assembled-code (primplify compiled-code))
+;;; (load-primp assembled-code)
+;;; (run-primp)
     
