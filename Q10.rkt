@@ -134,7 +134,7 @@
                ;; TODO: not sure if moving FP and SP is needed
                
                ;(set! program (cons (list 'move 'FP 'SP) program))
-               (set! program (cons (list 'jsr 'RETURN-ADDR (first aexp)) program))
+               (set! program (cons (list 'jsr 'RETURN-ADDR nfun-name) program))
                (set! program (cons (list 'sub 'SP 'SP params-len) program))
                (list 'RETURN-VAL tmpcount 'RETURN-VAL)]
         ;;(set! SP (sub SP tmp-count))
