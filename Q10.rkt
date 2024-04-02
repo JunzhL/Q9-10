@@ -422,7 +422,9 @@
   (set! program (cons (list 'sub 'SP 'SP size-name) program))
   (set! program (cons (list 'move 'FP (list nFP 'SP)) program))
   (set! program (cons (list 'move 'RETURN-ADDR (list nRTA 'SP)) program))
-  (set! program (cons (list 'jump 'RETURN-ADDR) program)))
+  (if (symbol=? fun-name 'main)
+      (set! program (cons (list 'halt) program))
+  (set! program (cons (list 'jump 'RETURN-ADDR) program))))
          
 
 
@@ -533,10 +535,10 @@
                (iif (> n 0)
                     (set result (countdown (- n 1)))
                     (skip))
-               (return result)))))
-    ;;; (fun (main) 
-    ;;;      (vars [(n 10)] 
-    ;;;            (return (countdown n))))))
+               (return result)))
+     (fun (main) 
+          (vars [(n 10)] 
+                (return (countdown n))))))
 ;
 
 (define varg-offset-test 
@@ -563,9 +565,9 @@
   (vars [(result 0)]
     (return result)))))
 
-;;; Run code
+;; Run code
 
-(compile-simpl main-test)
+(compile-simpl test1)
 ;;; (define assembled-code (primplify compiled-code))
 ;;; (load-primp assembled-code)
 ;;; (run-primp)
